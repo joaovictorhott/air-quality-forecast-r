@@ -1,0 +1,120 @@
+# Carregar pacotes necessários
+library(dplyr)
+library(lubridate)
+library(readr)
+library(ggplot2)
+library(forecast)
+library(tseries)
+library(lmtest)
+
+# Carregar os dados
+quality_global <- read_csv("Desktop/AirQuality/quality_global.csv")
+
+# Converter a coluna `data_hora` para o formato datetime
+quality_global <- quality_global %>%
+  mutate(data_hora = ymd_hms(data_hora))
+
+# Converter a coluna `nitrogen_dioxide` para numérico
+quality_global$nitrogen_dioxide <- as.numeric(as.character(quality_global$nitrogen_dioxide))
+
+# Criar uma nova coluna com ano e mês apenas
+quality_global <- quality_global %>%
+  mutate(Mes_Ano = floor_date(data_hora, "month"))
+
+# Calcular médias mensais de NO2
+medias_mensais <- quality_global %>%
+  group_by(Mes_Ano) %>%
+  summarise(Media_NO2 = mean(nitrogen_dioxide, na.rm = TRUE))
+
+# Verificar se a coluna `Mes_Ano` foi calculada corretamente
+print(medias_mensais)
+
+# Garantir que não há problemas com NA
+if (all(is.na(medias_mensais$Mes_Ano))) {
+  stop("A coluna 'Mes_Ano' está vazia ou possui apenas valores NA.")
+}
+
+# Calcular o valor inicial (start) da série temporal, ignorando valores NA
+start <- c(year(min(medias_mensais$Mes_Ano, na.rm = TRUE)), 
+           month(min(medias_mensais$Mes_Ano, na.rm = TRUE)))
+
+# Criar a série temporal para Media_NO2
+Serie_Temporal <- ts(medias_mensais$Media_NO2, start = start, frequency = 12)
+ts.plot(Serie_Temporal)
+# Visualizar a série temporal original
+ggtsdisplay(Serie_Temporal)
+
+# Transformação Box-Cox
+lambda <- BoxCox.lambda(Serie_Temporal)
+Serie_Temporal_bc <- BoxCox(z, lambda = lambda)
+
+ggtsdisplay(Serie_Temporal_bc)
+
+# Gráfico com autoplot
+autoplot(Serie_Temporal_bc) +
+  labs(
+    title = "Time Series with Box-Cox Transformation",
+    y = "Box-Cox transformation of NO2"
+  )
+
+# Diferenciação não sazonal
+ndiffs(Serie_Temporal_bc)
+Serie_Temporal_diff <- diff(Serie_Temporal_bc, 1)
+ggtsdisplay(Serie_Temporal_diff)
+
+# Diferenciação sazonal
+nsdiffs(z_diff)
+z_diff2 <- diff(z_diff, 12)
+
+# Dividir a série em treino e validação
+z_treino <- window(z, start = c(2020, 1), end = c(2024, 12))  # Ajuste o intervalo para o ano de 2023 até dezembro de 2024
+z_validacao <- window(z, end = c(2025, 1))  # Validação a partir de 2024
+
+# Transformação Box-Cox (se necessário)
+lambda <- BoxCox.lambda(z_treino)  # Determinar o lambda ideal
+z_treino_bc <- BoxCox(z_treino, lambda)  # Aplicar transformação Box-Cox
+
+# Ajustar o modelo ARIMA
+fit <- Arima(z_treino, order = c(1, 1, 0), seasonal = c(1, 1, 0), lambda = TRUE)
+
+# Verificar o ajuste e teste de hipotese
+summary(fit)
+coeftest(fit)
+
+plot(z_treino)
+lines(fit$fitted,col='blue')
+accuracy(z_treino, fit$fitted)
+
+# Fazer previsões
+predi <- forecast(fit, h = 12)
+plot(predi)
+
+
+plot(as.numeric(z_validacao), type ='l')
+lines(as.numeric(predi$mean), col = 'blue')
+
+
+# Verificar as previsões
+print(predi$mean)
+
+# Criar um data frame com as previsões e os meses de 2025
+predi <- data.frame(
+  Mes_Ano = seq(as.Date("2025-01-01"), by = "month", length.out = length(predi$mean)),
+  Media_NO2_Prevista = as.numeric(predi$mean)
+)
+
+# Verificar o data frame de previsões
+print(predi)
+
+# Criar o gráfico de barras
+
+ggplot(predi, aes(x = Mes_Ano, y = Media_NO2_Prevista)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_text(aes(label = round(Media_NO2_Prevista, 2)), vjust = -0.5, size = 4)+
+  labs(
+    title = "Predicted Monthly Averages of NO2 for 2025",
+    x = "Months in 2025",
+    y = "Predicted Average of NO2"
+  ) +
+  scale_x_date(date_labels = "%b", date_breaks = "1 month") +
+  theme_minimal()
